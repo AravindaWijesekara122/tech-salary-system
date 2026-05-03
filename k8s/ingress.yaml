@@ -8,10 +8,8 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: techsalary.local
-      http:
+    - http:                    # ← no host line
         paths:
-          # BFF — forward /api/* as-is, no rewrite
           - path: /api
             pathType: Prefix
             backend:
@@ -19,7 +17,6 @@ spec:
                 name: bff
                 port:
                   number: 3000
-          # Frontend — everything else
           - path: /
             pathType: Prefix
             backend:
