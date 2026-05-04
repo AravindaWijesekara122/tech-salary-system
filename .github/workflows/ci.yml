@@ -1,0 +1,97 @@
+name: CI/CD - Build, Push and Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: docker.io
+  AKS_CLUSTER: techsalary-aks
+  AKS_RESOURCE_GROUP: techsalary-rg
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false    # ← don't cancel other jobs if one fails
+      matrix:
+        include:
+          - service: identity-service
+            context: ./identity-service
+          - service: salary-submission-service
+            context: ./salary-submission-service
+          - service: vote-service
+            context: ./vote-service
+          - service: search-service
+            context: ./search-service
+          - service: stats-service
+            context: ./stats-service
+          - service: bff-service
+            context: ./bff-service
+          - service: frontend-service
+            context: ./frontend-service
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 🐳 Build and Push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push    # ← only runs AFTER all builds succeed
+    if: github.ref == 'refs/heads/main'   # ← only deploys on main branch
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: ☸️ Connect to AKS
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER }}
+
+      - name: 🚀 Deploy to AKS
+        run: |
+          # Restart all deployments to pull latest images
+          kubectl rollout restart deployment identity-service -n app
+          kubectl rollout restart deployment salary-submission-service -n app
+          kubectl rollout restart deployment vote-service -n app
+          kubectl rollout restart deployment search-service -n app
+          kubectl rollout restart deployment stats-service -n app
+          kubectl rollout restart deployment bff-service -n app
+          kubectl rollout restart deployment frontend-service -n app
+
+      - name: ✅ Verify Deployment
+        run: |
+          kubectl rollout status deployment/identity-service -n app --timeout=120s
+          kubectl rollout status deployment/salary-submission-service -n app --timeout=120s
+          kubectl rollout status deployment/vote-service -n app --timeout=120s
+          kubectl rollout status deployment/search-service -n app --timeout=120s
+          kubectl rollout status deployment/stats-service -n app --timeout=120s
+          kubectl rollout status deployment/bff-service -n app --timeout=120s
+          kubectl rollout status deployment/frontend-service -n app --timeout=120s
+
+      - name: 📋 Show Running Pods
+        run: kubectl get pods -n app
